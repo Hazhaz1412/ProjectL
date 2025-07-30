@@ -32,6 +32,14 @@ docker compose up -d
 ```powershell
 npm run migrate:up
 ```
+**EN:** If an error occurs, try installing `migrate-mongo`:
+
+**VN:** Nếu có lỗi, hãy thử cài đặt `migrate-mongo`:
+
+```powershell
+npm install migrate-mongo --save-dev
+```
+
 
 ---
 
