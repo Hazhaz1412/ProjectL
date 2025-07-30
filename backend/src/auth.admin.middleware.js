@@ -10,8 +10,7 @@ function requireAdmin(req, res, next) {
   }
   const token = authHeader.replace('Bearer ', '');
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    // Nếu là superuser hoặc staff thì cho phép
+    const payload = jwt.verify(token, JWT_SECRET); 
     if (payload.is_superuser || payload.is_staff) {
       req.user = payload;
       return next();

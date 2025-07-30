@@ -15,8 +15,7 @@ async function getDb() {
   const client = await MongoClient.connect(MONGO_URI, { useUnifiedTopology: true });
   return client.db(DB_NAME);
 }
-
-// Passport config
+ 
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
@@ -43,7 +42,7 @@ passport.use(new GoogleStrategy({
           extra_permissions: [],
           created_at: new Date(),
           updated_at: new Date(),
-          password: null // Không cho login thủ công
+          password: null  
         };
         const result = await users.insertOne(user);
         user._id = result.insertedId;
@@ -68,8 +67,7 @@ passport.deserializeUser(async (id, done) => {
     done(err, null);
   }
 });
-
-// Session middleware (cần cho passport)
+ 
 router.use(session({
   secret: process.env.JWT_SECRET || 'your_jwt_secret',
   resave: false,

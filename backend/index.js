@@ -22,8 +22,7 @@ app.set('redis', redis);
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
-// Session cho passport (OAuth)
+app.use(express.json({limit : '20kb'})); 
 app.use(session({
   secret: process.env.JWT_SECRET || 'your_jwt_secret',
   resave: false,
@@ -33,7 +32,7 @@ app.use((req, res, next) => {
   if (req.body) mongoSanitize.sanitize(req.body);
   if (req.params) mongoSanitize.sanitize(req.params);
   next();
-}); // middleware luôn return function
+}); 
 app.use(xss());
 
 app.use(rateLimit({
@@ -42,16 +41,27 @@ app.use(rateLimit({
   message: 'Too many requests, please try again later.'
 }));
 
-// Routes
 app.get('/', (req, res) => {
   res.send('Backend is working!');
 });
 const adminRoutes = require('./src/admin.routes');
 app.use('/auth', require('./src/auth.routes'));
 app.use('/admin', adminRoutes);
+
 app.use('/auth', require('./src/oauth.routes'));
+ 
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(err.status || 500).json({
+    message: err.message || 'Internal server error',
+    error: process.env.NODE_ENV === 'production' ? undefined : err.stack
+  });
+}); 
+app.use((req, res) => {
+  res.status(404).json({ message: 'Not found' });
+});
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on port ${PORT}`);
 });
