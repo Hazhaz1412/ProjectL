@@ -1,8 +1,7 @@
-// Middleware kiểm tra quyền truy cập admin
+ 
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
-
-// Yêu cầu header Authorization: Bearer <token>
+ 
 function requireAdmin(req, res, next) {
   const authHeader = req.headers['authorization'] || req.headers['Authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

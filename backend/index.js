@@ -3,12 +3,11 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
-const { xss } = require('express-xss-sanitizer'); // dùng package thay thế
+const { xss } = require('express-xss-sanitizer');
 
 const session = require('express-session');
 const app = express();
 
-// Redis setup
 const Redis = require('ioredis');
 const redis = new Redis({
   host: process.env.REDIS_HOST || 'redis',

@@ -79,24 +79,21 @@ const registerSchema = Joi.object({
   is_staff: Joi.boolean().optional()
 }).unknown(true);
 
-router.post('/register', async (req, res) => {
-  // Validate reCAPTCHA v3 token, cho phép bypass nếu là 'dummydummy' (chỉ dùng cho test local)
+router.post('/register', async (req, res) => { 
   const { captchaToken } = req.body;
   if (!captchaToken) {
     return res.status(400).json({ message: 'Missing captcha token' });
   }
-  if (captchaToken !== 'dummydummy') {
-    try {
-      const secret = process.env.RECAPTCHA_SECRET;
-      const verifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${secret}&response=${captchaToken}`;
-      const verifyRes = await axios.post(verifyUrl, {}, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-      const verifyData = verifyRes.data;
-      if (!verifyData.success || verifyData.score < 0.5) {
-        return res.status(400).json({ message: 'reCAPTCHA verification failed', score: verifyData.score });
-      }
-    } catch (err) {
-      return res.status(400).json({ message: 'reCAPTCHA validation error', error: err.message });
+  try {
+    const secret = process.env.RECAPTCHA_SECRET;
+    const verifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${secret}&response=${captchaToken}`;
+    const verifyRes = await axios.post(verifyUrl, {}, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    const verifyData = verifyRes.data;
+    if (!verifyData.success || verifyData.score < 0.5) {
+      return res.status(400).json({ message: 'reCAPTCHA verification failed', score: verifyData.score });
     }
+  } catch (err) {
+    return res.status(400).json({ message: 'reCAPTCHA validation error', error: err.message });
   }
 
   const { error, value } = registerSchema.validate(req.body);
@@ -106,8 +103,7 @@ router.post('/register', async (req, res) => {
     const db = await getDb();
     const users = db.collection('users');
     const authentication = db.collection('authentication');
-    const redis = getRedis(req);
-    // Check cache first
+    const redis = getRedis(req); 
     let existing = null;
     const cacheKey = `user:${email}`;
     const cached = await redis.get(cacheKey);
@@ -115,8 +111,7 @@ router.post('/register', async (req, res) => {
       existing = JSON.parse(cached);
     } else {
       existing = await users.findOne({ email });
-      if (existing) {
-        // Serialize _id to string for cache
+      if (existing) { 
         const userToCache = { ...existing, _id: existing._id?.toString?.() || existing._id };
         await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600); // cache 1h
       }

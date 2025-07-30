@@ -26,13 +26,11 @@ passport.use(new GoogleStrategy({
       const db = await getDb();
       const users = db.collection('users');
       let user = await users.findOne({ email: profile.emails[0].value });
-      if (user) {
-        // Nếu user đã có (dù là thủ công hay oauth), cập nhật provider nếu cần
+      if (user) { 
         if (!user.provider) {
           await users.updateOne({ _id: user._id }, { $set: { provider: 'google' } });
         }
-      } else {
-        // Tạo user mới với provider google
+      } else { 
         user = {
           email: profile.emails[0].value,
           provider: 'google',
@@ -75,12 +73,11 @@ router.use(session({
 }));
 router.use(passport.initialize());
 router.use(passport.session());
-
-// Google OAuth login
+ 
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 router.get('/google/callback', passport.authenticate('google', { failureRedirect: '/auth/google/fail' }), (req, res) => {
-  // Đăng nhập thành công, trả về JWT
+ 
   const user = req.user;
   const payload = {
     user_id: user._id,
@@ -88,8 +85,7 @@ router.get('/google/callback', passport.authenticate('google', { failureRedirect
     roles: user.roles || [],
     extra_permissions: user.extra_permissions || []
   };
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-  // Có thể redirect về FE kèm token hoặc trả về JSON
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' }); 
   res.json({ token });
 });
 
