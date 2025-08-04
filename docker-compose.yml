@@ -1,6 +1,24 @@
 version: "3.9"
 
 services:
+  init-mongo-replica:
+    image: mongo
+    depends_on:
+      - mongo-write
+      - mongo-read
+    volumes:
+      - ./init-replica.sh:/init-replica.sh:ro
+    entrypoint: ["sh", "/init-replica.sh"]
+  db-healthcheck:
+    build: ./db-healthcheck
+    environment:
+      - MONGO_URI_WRITE=mongodb://mongo-write:27017/mydb?replicaSet=rs0
+      - MONGO_URI_READ=mongodb://mongo-read:27017/mydb?replicaSet=rs0
+    depends_on:
+      - mongo-write
+      - mongo-read
+    ports:
+      - "9990:9990"
   frontend:
     build: ./frontend
     ports:
@@ -22,27 +40,50 @@ services:
       - ./backend:/app
       - /app/node_modules
     environment:
-      - MONGO_URI=mongodb://mongo:27017/mydb
+      - MONGO_URI_WRITE=mongodb://mongo-write:27017/mydb
+      - MONGO_URI_READ=mongodb://mongo-read:27017/mydb
       - PORT=4000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
-      - mongo
+      - mongo-write
+      - mongo-read
       - redis
 
-  mongo:
+
+  mongo-write:
     image: mongo
     ports:
       - "27017:27017"
     volumes:
-      - mongo_data:/data/db
+      - mongo_write_data:/data/db
+    command: --replSet rs0
 
-  mongo-express:
+  mongo-read:
+    image: mongo
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_read_data:/data/db
+    command: --replSet rs0
+
+  mongo-express-write:
     image: mongo-express
     ports:
       - "8081:8081"
     environment:
-      - ME_CONFIG_MONGODB_SERVER=mongo
+      - ME_CONFIG_MONGODB_SERVER=mongo-write
+      - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=admin
+
+  mongo-express-read:
+    image: mongo-express
+    ports:
+      - "8082:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo-read
       - ME_CONFIG_MONGODB_ENABLE_ADMIN=true
       - ME_CONFIG_MONGODB_PORT=27017
       - ME_CONFIG_BASICAUTH_USERNAME=admin
@@ -56,5 +97,6 @@ services:
       - redis_data:/data
 
 volumes:
-  mongo_data:
+  mongo_write_data:
+  mongo_read_data:
   redis_data:

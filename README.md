@@ -1,83 +1,118 @@
-# ProjectL - Dockerized Fullstack App
+# ProjectLung - Hệ thống Full-stack với Read/Write Splitting
 
-##  Quick Start (English & Tiếng Việt)
+## Tổng quan kiến trúc
 
-### 1️⃣ Build & Start Docker Containers  
-**EN:** Build and launch all services using Docker Compose.  
-**VN:** Build và khởi động tất cả dịch vụ bằng Docker Compose.
+Hệ thống được thiết kế theo mô hình **Read/Write Splitting** với MongoDB Replica Set:
 
+- **mongo-write**: Primary database (nhận tất cả thao tác ghi)
+- **mongo-read**: Secondary database (chỉ nhận thao tác đọc)  
+- **Redis**: Cache layer
+- **Backend**: Node.js/Express API với JWT authentication, RBAC
+- **Frontend**: React/Vite với Google reCAPTCHA v3
 
+## Cách khởi động hệ thống
 
-```powershell
-npm install
-docker compose build --no-cache
-docker compose up -d
-```
+### 1. Chuẩn bị môi trường
 
-**EN:** If you see errors about Node modules, delete the `node_modules` folder and try again:  
-**VN:** Nếu gặp lỗi về Node.js module, hãy xóa thư mục `node_modules` và thử lại:
-
-```powershell
-Remove-Item -Recurse -Force node_modules
-docker compose build --no-cache
-docker compose up -d
-```
-
----
-
-### 2️⃣ Run Database Migration  
-**EN:** After containers are running, apply database migrations:  
-**VN:** Sau khi Docker chạy thành công, thực hiện migration database:
-
-```powershell
-npm run migrate:up
-```
-
----
-
-### 3️⃣ Cấu hình môi trường backend (.env)
-**EN:** Before running, create a `.env` file in the `backend/` folder with the following variables:
-**VN:** Trước khi chạy, tạo file `.env` trong thư mục `backend/` với các biến sau:
+Tạo file `.env` trong thư mục backend:
 
 ```env
-# Google reCAPTCHA v3 secret key (lấy từ Google admin, không chia sẻ công khai)
-RECAPTCHA_SECRET=your_recaptcha_secret
+# MongoDB Read/Write Splitting
+MONGO_URI_WRITE=mongodb://mongo-write:27017/lung_app
+MONGO_URI_READ=mongodb://mongo-read:27017/lung_app
 
-# Email config (dùng để gửi mail xác thực)
+# JWT và Security
+JWT_SECRET=your_super_secret_jwt_key_here_change_in_production
+RECAPTCHA_SECRET=your_google_recaptcha_v3_secret_key
+
+# Email (để xác thực tài khoản)
 EMAIL_USER=your_gmail@gmail.com
 EMAIL_PASS=your_gmail_app_password
 
-# JWT secret key
-JWT_SECRET=your_jwt_secret
+# Google OAuth (nếu sử dụng)
+GOOGLE_CLIENT_ID=your_google_oauth_client_id
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
 
-# MongoDB connection
-MONGO_URI=mongodb://mongo:27017/mydb
-DB_NAME=lung_app
+# URL public
+PUBLIC_URL=http://localhost:4000
 
-# Google OAuth (nếu dùng)
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-
-# Link public (dùng cho email xác thực)
-PUBLIC_URL=http://localhost:5173/
-
-# Redis config
+# Redis
 REDIS_HOST=redis
 REDIS_PORT=6379
+
+USE_RATE_LIMIT=true
 ```
 
-**Lưu ý:**
-- Không commit file `.env` chứa secret lên git!
-- Nếu có file `.env.example`, hãy copy thành `.env` rồi điền giá trị thật.
 
----
+### 2. Khởi động hệ thống
 
-## Notes | Lưu ý
+```bash
+# Bước 1: Khởi động tất cả services
+docker-compose up -d
+# Bước 3: Khởi tạo replica set (tự động, chỉ chạy 1 lần khi setup lần đầu)
+docker-compose up init-mongo-replica
 
-- Make sure Docker and Docker Compose are installed.  
-  Đảm bảo đã cài đặt Docker và Docker Compose.
-- For more details, see each service's README or Dockerfile.  
-  Xem thêm chi tiết trong README hoặc Dockerfile của từng dịch vụ.
+# Service này sẽ tự động khởi tạo replica set cho MongoDB. Sau khi thấy log "ok" hoặc không còn lỗi, bạn có thể dừng service này:
+docker-compose stop init-mongo-replica
+```
 
----
+### 3. Chạy migration (tạo collections và indexes)
 
+```bash
+# Vào container backend
+docker-compose exec backend sh
+
+# Chạy migration (migrate-mongo sẽ tự động dùng DB write)
+npm run migrate:up
+
+# Thoát container
+exit
+```
+
+### Truy cập hệ thống
+
+- **Frontend**: http://localhost:5173
+- **Backend API**: http://localhost:4000
+- **MongoDB Write**: localhost:27017
+- **MongoDB Read**: localhost:27018
+- **Redis**: localhost:6379
+- **Mongo Express (Write)**: http://localhost:8081 (admin/admin)
+- **Mongo Express (Read)**: http://localhost:8082 (admin/admin)
+- **DB Healthcheck**: http://localhost:9990/health
+
+### Đồng bộ dữ liệu
+
+MongoDB Replica Set tự động đồng bộ dữ liệu từ Primary (mongo-write) sang Secondary (mongo-read).  
+Không cần viết code đồng bộ thủ công.
+
+## Troubleshooting
+
+### 1. MongoDB không khởi động
+
+```bash
+# Kiểm tra logs
+docker-compose logs mongo-write
+docker-compose logs mongo-read
+
+# Xóa volumes và khởi động lại
+docker-compose down -v
+docker-compose up -d
+```
+
+### 2. Replica set chưa được khởi tạo
+
+```bash
+# Chạy lại script khởi tạo
+docker-compose up init-mongo-replica
+```
+
+### 3. Backend không kết nối được DB
+
+```bash
+# Kiểm tra network
+docker-compose exec backend ping mongo-write
+docker-compose exec backend ping mongo-read
+
+# Kiểm tra biến môi trường
+docker-compose exec backend env | grep MONGO
+```

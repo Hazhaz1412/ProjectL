@@ -2,19 +2,13 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const express = require('express');
 const session = require('express-session');
-const { MongoClient, ObjectId } = require('mongodb');
+const { ObjectId } = require('mongodb');
+const { getDbWrite, getDbRead } = require('./db.rw');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
-const DB_NAME = process.env.DB_NAME || 'lung_app';
-
-async function getDb() {
-  const client = await MongoClient.connect(MONGO_URI, { useUnifiedTopology: true });
-  return client.db(DB_NAME);
-}
  
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
@@ -23,14 +17,20 @@ passport.use(new GoogleStrategy({
 },
   async (accessToken, refreshToken, profile, done) => {
     try {
-      const db = await getDb();
-      const users = db.collection('users');
-      let user = await users.findOne({ email: profile.emails[0].value });
+      // Đọc user từ DB read
+      const dbRead = await getDbRead();
+      const usersRead = dbRead.collection('users');
+      let user = await usersRead.findOne({ email: profile.emails[0].value });
+      
       if (user) { 
         if (!user.provider) {
-          await users.updateOne({ _id: user._id }, { $set: { provider: 'google' } });
+          // Cập nhật provider (thao tác ghi)
+          const dbWrite = await getDbWrite();
+          await dbWrite.collection('users').updateOne({ _id: user._id }, { $set: { provider: 'google' } });
         }
       } else { 
+        // Tạo user mới (thao tác ghi)
+        const dbWrite = await getDbWrite();
         user = {
           email: profile.emails[0].value,
           provider: 'google',
@@ -42,7 +42,7 @@ passport.use(new GoogleStrategy({
           updated_at: new Date(),
           password: null  
         };
-        const result = await users.insertOne(user);
+        const result = await dbWrite.collection('users').insertOne(user);
         user._id = result.insertedId;
       }
       return done(null, user);
@@ -57,8 +57,9 @@ passport.serializeUser((user, done) => {
 });
 passport.deserializeUser(async (id, done) => {
   try {
-    const db = await getDb();
-    const users = db.collection('users');
+    // Đọc user từ DB read
+    const dbRead = await getDbRead();
+    const users = dbRead.collection('users');
     const user = await users.findOne({ _id: new ObjectId(id) });
     done(null, user);
   } catch (err) {

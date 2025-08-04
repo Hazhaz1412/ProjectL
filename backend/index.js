@@ -34,11 +34,14 @@ app.use((req, res, next) => {
 }); 
 app.use(xss());
 
-app.use(rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests, please try again later.'
-}));
+if (process.env.USE_RATE_LIMIT === 'true') {
+  app.use(rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: 'Too many requests, please try again later.'
+  }));
+}
+
 
 app.get('/', (req, res) => {
   res.send('Backend is working!');

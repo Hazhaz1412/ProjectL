@@ -1,3 +1,19 @@
+// Middleware xác thực JWT
+function requireJWT(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Missing or invalid Authorization header' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+}
+ 
 require('dotenv').config();
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -5,22 +21,11 @@ const jwt = require('jsonwebtoken');
 const Joi = require('joi');
 const nodemailer = require('nodemailer');
 
-const { MongoClient, ObjectId } = require('mongodb');
+const { ObjectId } = require('mongodb');
+const { getDbWrite, getDbRead } = require('./db.rw');
 const axios = require('axios');
 
-let globalMongoClient = null;
-async function getMongoClient() {
-  if (globalMongoClient && globalMongoClient.topology && globalMongoClient.topology.isConnected()) {
-    return globalMongoClient;
-  }
-  globalMongoClient = await MongoClient.connect(MONGO_URI, { maxPoolSize: 20 });
-  return globalMongoClient;
-}
-
-async function getDb() {
-  const client = await getMongoClient();
-  return client.db(DB_NAME);
-}
+// Đã thay thế bằng getDbWrite/getDbRead từ db.rw.js
 
 async function sendVerificationEmail(to, code) { 
   const transporter = nodemailer.createTransport({
@@ -44,12 +49,12 @@ const router = express.Router();
 function getRedis(req) {
   return req.app.get('redis');
 }
-
+ 
 router.get('/verify', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).json({ message: 'Missing verification code' });
   try {
-    const db = await getDb();
+    const db = await getDbWrite();
     const authentication = db.collection('authentication');
     const users = db.collection('users');
     const record = await authentication.findOne({ auth_code: code, type: 'verify', is_verified: false });
@@ -79,6 +84,59 @@ const registerSchema = Joi.object({
   is_staff: Joi.boolean().optional()
 }).unknown(true);
 
+
+router.get('/my_profile', requireJWT, async (req, res) => {
+  try {
+    const db = await getDbRead();
+    const users = db.collection('users');
+    // Lấy redis instance đúng từ req
+    let redis = null;
+    if (req.app && typeof req.app.get === 'function') {
+      redis = req.app.get('redis');
+    }
+    const userId = req.user.user_id;
+    const cacheKey = `user_profile:${userId}`;
+
+    // Kiểm tra cache trước
+    let user = null;
+    try {
+      if (redis && redis.get) {
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          user = JSON.parse(cached);
+          return res.json({ user });
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('Cache read error:', cacheErr.message);
+    }
+
+    // Nếu cache miss, query DB với projection (loại trừ password)
+    user = await users.findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { password: 0 } }
+    );
+
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Cache kết quả (TTL 30 phút)
+    try {
+      if (redis && redis.set) {
+        const userToCache = { ...user, _id: user._id?.toString?.() || user._id };
+        await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 1800);
+      }
+    } catch (cacheErr) {
+      console.warn('Cache write error:', cacheErr.message);
+    }
+
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
+
 router.post('/register', async (req, res) => { 
   const { captchaToken } = req.body;
   if (!captchaToken) {
@@ -100,7 +158,7 @@ router.post('/register', async (req, res) => {
   if (error) return res.status(400).json({ message: error.details[0].message });
   const { email, password, is_superuser = false, is_staff = false } = value;
   try {
-    const db = await getDb();
+    const db = await getDbWrite();
     const users = db.collection('users');
     const authentication = db.collection('authentication');
     const redis = getRedis(req); 
@@ -110,7 +168,9 @@ router.post('/register', async (req, res) => {
     if (cached) {
       existing = JSON.parse(cached);
     } else {
-      existing = await users.findOne({ email });
+      // Đọc kiểm tra email tồn tại nên dùng DB đọc
+      const dbRead = await getDbRead();
+      existing = await dbRead.collection('users').findOne({ email });
       if (existing) { 
         const userToCache = { ...existing, _id: existing._id?.toString?.() || existing._id };
         await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600); // cache 1h
@@ -157,8 +217,8 @@ router.post('/login', async (req, res) => {
   if (error) return res.status(400).json({ message: error.details[0].message });
   const { email, password } = value;
   try {
-    const db = await getDb();
-    const users = db.collection('users');
+    const dbRead = await getDbRead();
+    const users = dbRead.collection('users');
     const redis = getRedis(req);
     let user = null;
     const cacheKey = `user:${email}`;

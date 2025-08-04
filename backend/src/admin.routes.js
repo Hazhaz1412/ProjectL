@@ -3,7 +3,7 @@ const { requireAdmin } = require('./auth.admin.middleware');
 const router = express.Router();
 
 const { ObjectId } = require('mongodb');
-const { getDb } = require('./db');
+const { getDbWrite, getDbRead } = require('./db.rw');
  
 router.get('/', requireAdmin, (req, res) => {
   res.json({ message: 'Bạn có quyền truy cập trang admin!', user: req.user });
@@ -13,10 +13,15 @@ router.post('/permissions', requireAdmin, async (req, res) => {
   const { name, description } = req.body;
   if (!name) return res.status(400).json({ message: 'Permission name is required' });
   try {
-    const db = await getDb();
-    const permissions = db.collection('permissions');
-    const existing = await permissions.findOne({ name });
+    // Kiểm tra permission tồn tại (đọc)
+    const dbRead = await getDbRead();
+    const permissionsRead = dbRead.collection('permissions');
+    const existing = await permissionsRead.findOne({ name });
     if (existing) return res.status(409).json({ message: 'Permission already exists' });
+    
+    // Tạo permission mới (ghi)
+    const dbWrite = await getDbWrite();
+    const permissions = dbWrite.collection('permissions');
     const result = await permissions.insertOne({ name, description: description || '', created_at: new Date() });
     res.status(201).json({ message: 'Permission created', id: result.insertedId });
   } catch (err) {
@@ -28,10 +33,15 @@ router.post('/roles', requireAdmin, async (req, res) => {
   const { name, description, permissions } = req.body;
   if (!name) return res.status(400).json({ message: 'Role name is required' });
   try {
-    const db = await getDb();
-    const roles = db.collection('roles');
-    const existing = await roles.findOne({ name });
+    // Kiểm tra role tồn tại (đọc)
+    const dbRead = await getDbRead();
+    const rolesRead = dbRead.collection('roles');
+    const existing = await rolesRead.findOne({ name });
     if (existing) return res.status(409).json({ message: 'Role already exists' }); 
+    
+    // Tạo role mới (ghi)
+    const dbWrite = await getDbWrite();
+    const roles = dbWrite.collection('roles');
     const role = {
       name,
       description: description || '',
@@ -54,8 +64,9 @@ router.patch('/users/permissions', requireAdmin, async (req, res) => {
     return res.status(400).json({ message: 'userIds và permissions phải là mảng' });
   }
   try {
-    const db = await getDb();
-    const users = db.collection('users');
+    // Cập nhật permissions cho users (thao tác ghi)
+    const dbWrite = await getDbWrite();
+    const users = dbWrite.collection('users');
     const objectIds = userIds.map(id => new ObjectId(id)); 
     const permissionIds = permissions.map(id => new ObjectId(id));
     const result = await users.updateMany(
@@ -75,8 +86,9 @@ router.patch('/users/roles', requireAdmin, async (req, res) => {
     return res.status(400).json({ message: 'userIds và roles phải là mảng' });
   }
   try {
-    const db = await getDb();
-    const users = db.collection('users');
+    // Cập nhật roles cho users (thao tác ghi)
+    const dbWrite = await getDbWrite();
+    const users = dbWrite.collection('users');
     const objectIds = userIds.map(id => new ObjectId(id)); 
     const roleIds = roles.map(id => new ObjectId(id));
     const result = await users.updateMany(
