@@ -12,9 +12,10 @@ Hệ thống được thiết kế theo mô hình **Read/Write Splitting** với
 
 ## Cách khởi động hệ thống
 
+
 ### 1. Chuẩn bị môi trường
 
-Tạo file `.env` trong thư mục backend:
+Tạo file `.env` ở thư mục gốc (ProjectLung):
 
 ```env
 # MongoDB Read/Write Splitting
@@ -39,6 +40,10 @@ PUBLIC_URL=http://localhost:4000
 # Redis
 REDIS_HOST=redis
 REDIS_PORT=6379
+
+# AI service security keys (dùng cho kết nối bảo mật giữa backend và ai-service)
+AI_API_KEY=lungai
+AI_API_SECRET=supersecret
 
 USE_RATE_LIMIT=true
 ```
@@ -69,6 +74,7 @@ npm run migrate:up
 exit
 ```
 
+
 ### Truy cập hệ thống
 
 - **Frontend**: http://localhost:5173
@@ -79,6 +85,22 @@ exit
 - **Mongo Express (Write)**: http://localhost:8081 (admin/admin)
 - **Mongo Express (Read)**: http://localhost:8082 (admin/admin)
 - **DB Healthcheck**: http://localhost:9990/health
+- **AI Service (FastAPI)**: http://localhost:8000
+
+### Kết nối bảo mật giữa backend (Express) và ai-service (FastAPI)
+
+Khi backend gọi API sang ai-service, phải truyền 2 header:
+
+- `x-api-key: ${AI_API_KEY}`
+- `x-api-secret: ${AI_API_SECRET}`
+
+Hai giá trị này lấy từ file .env. Nếu không đúng, ai-service sẽ trả về lỗi 401.
+### Một số route mặc định của AI service (FastAPI)
+
+- `GET /health` — kiểm tra trạng thái service
+- `GET /info` — thông tin service/model
+- `GET /ping` — kiểm tra kết nối (trả về pong)
+- `POST /predict` — nhận dữ liệu, trả về kết quả dự đoán (yêu cầu header bảo mật)
 
 ### Đồng bộ dữ liệu
 

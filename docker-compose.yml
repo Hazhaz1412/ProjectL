@@ -1,6 +1,16 @@
 version: "3.9"
 
 services:
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_PATH=/app/model
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_API_SECRET=${AI_API_SECRET}
+    volumes:
+      - ./ai-service:/app
   init-mongo-replica:
     image: mongo
     depends_on:
@@ -45,6 +55,8 @@ services:
       - PORT=4000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_API_SECRET=${AI_API_SECRET}
     depends_on:
       - mongo-write
       - mongo-read
