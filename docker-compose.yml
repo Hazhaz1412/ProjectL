@@ -11,6 +11,14 @@ services:
       - AI_API_SECRET=${AI_API_SECRET}
     volumes:
       - ./ai-service:/app
+
+  image-processor:
+    build: ./image-processor
+    ports:
+      - "8001:8001"
+    environment:
+      - IMAGE_API_KEY=${IMAGE_API_KEY}
+      - IMAGE_API_SECRET=${IMAGE_API_SECRET}
   init-mongo-replica:
     image: mongo
     depends_on:
@@ -50,13 +58,15 @@ services:
       - ./backend:/app
       - /app/node_modules
     environment:
-      - MONGO_URI_WRITE=mongodb://mongo-write:27017/mydb
-      - MONGO_URI_READ=mongodb://mongo-read:27017/mydb
+      - MONGO_URI_WRITE=mongodb://mongo-write:27017/lung_app
+      - MONGO_URI_READ=mongodb://mongo-read:27017/lung_app
       - PORT=4000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - AI_API_KEY=${AI_API_KEY}
       - AI_API_SECRET=${AI_API_SECRET}
+      - IMAGE_API_KEY=${IMAGE_API_KEY}
+      - IMAGE_API_SECRET=${IMAGE_API_SECRET}
     depends_on:
       - mongo-write
       - mongo-read

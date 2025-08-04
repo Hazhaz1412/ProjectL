@@ -52,8 +52,12 @@ USE_RATE_LIMIT=true
 ### 2. Khởi động hệ thống
 
 ```bash
-# Bước 1: Khởi động tất cả services
-docker-compose up -d
+# Bước 1: Khởi động các service chính (không build image-processor)
+docker-compose up -d backend frontend db-healthcheck mongo-write mongo-read mongo-express-write mongo-express-read redis
+
+# Nếu muốn build và chạy image-processor (C++), hãy thực hiện riêng:
+# docker-compose build image-processor
+# docker-compose up -d image-processor
 # Bước 3: Khởi tạo replica set (tự động, chỉ chạy 1 lần khi setup lần đầu)
 docker-compose up init-mongo-replica
 
@@ -101,6 +105,12 @@ Hai giá trị này lấy từ file .env. Nếu không đúng, ai-service sẽ t
 - `GET /info` — thông tin service/model
 - `GET /ping` — kiểm tra kết nối (trả về pong)
 - `POST /predict` — nhận dữ liệu, trả về kết quả dự đoán (yêu cầu header bảo mật)
+
+### (Optional) Build service GrayScale 
+```
+docker-compose build image-processor
+docker-compose up -d image-processor
+```
 
 ### Đồng bộ dữ liệu
 

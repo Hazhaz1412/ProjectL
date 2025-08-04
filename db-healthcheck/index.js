@@ -1,7 +1,7 @@
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const app = express();
-const port = 3000;
+const port = 9990;
 
 const uriWrite = process.env.MONGO_URI_WRITE || 'mongodb://mongo-write:27017/mydb?replicaSet=rs0';
 const uriRead = process.env.MONGO_URI_READ || 'mongodb://mongo-read:27017/mydb?replicaSet=rs0';
