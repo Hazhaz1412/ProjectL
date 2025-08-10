@@ -15,7 +15,7 @@ Hệ thống được thiết kế theo mô hình **Read/Write Splitting** với
 
 ### 1. Chuẩn bị môi trường
 
-Tạo file `.env` ở thư mục gốc (ProjectLung):
+Tạo file `.env` ở thư mục gốc (ProjectLung) và backend (backend):
 
 ```env
 # MongoDB Read/Write Splitting
