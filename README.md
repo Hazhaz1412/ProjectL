@@ -12,6 +12,7 @@ Hệ thống được thiết kế theo mô hình **Read/Write Splitting** với
 
 ## Cách khởi động hệ thống
 
+### Lưu ý: Chỉ nên build Replica nếu bạn có 2 server chạy độc lập.
 
 ### 1. Chuẩn bị môi trường
 
