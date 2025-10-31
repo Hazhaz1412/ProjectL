@@ -1,0 +1,150 @@
+# kubernetes-deployment.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: projectL
+
+---
+# MongoDB Write Service (Primary)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo-write
+  namespace: projectL
+spec:
+  serviceName: mongo-write-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo-write
+  template:
+    metadata:
+      labels:
+        app: mongo-write
+    spec:
+      nodeSelector:
+        node-type: primary  # Label node chính
+      containers:
+      - name: mongo-write
+        image: mongo
+        args: ["--replSet", "rs0", "--bind_ip_all"]
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongo-write-storage
+          mountPath: /data/db
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: "admin"
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          value: "password"
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-write-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# MongoDB Read Service (Secondary) 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo-read
+  namespace: projectL
+spec:
+  serviceName: mongo-read-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo-read
+  template:
+    metadata:
+      labels:
+        app: mongo-read
+    spec:
+      nodeSelector:
+        node-type: replica  # Label node phụ
+      containers:
+      - name: mongo-read
+        image: mongo
+        args: ["--replSet", "rs0", "--bind_ip_all"]
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongo-read-storage
+          mountPath: /data/db
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: "admin"
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          value: "password"
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-read-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-write-service
+  namespace: projectL
+spec:
+  selector:
+    app: mongo-write
+  ports:
+  - port: 27017
+    targetPort: 27017
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-read-service
+  namespace: projectL
+spec:
+  selector:
+    app: mongo-read
+  ports:
+  - port: 27017
+    targetPort: 27017
+  type: ClusterIP
+
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: projectL
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: your-registry/backend:latest  # Build và push image trước
+        ports:
+        - containerPort: 4000
+        env:
+        - name: MONGO_URI_WRITE
+          value: "mongodb://mongo-write-service:27017/lung_app"
+        - name: MONGO_URI_READ
+          value: "mongodb://mongo-read-service:27017/lung_app"
+        - name: PORT
+          value: "4000"

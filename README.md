@@ -1,27 +1,25 @@
-# ProjectLung - Hệ thống Full-stack với Read/Write Splitting
+# ProjectLung - Hệ thống Full-stack với AI Service
 
 ## Tổng quan kiến trúc
 
-Hệ thống được thiết kế theo mô hình **Read/Write Splitting** với MongoDB Replica Set:
+Hệ thống bao gồm các thành phần chính:
 
-- **mongo-write**: Primary database (nhận tất cả thao tác ghi)
-- **mongo-read**: Secondary database (chỉ nhận thao tác đọc)  
+- **MongoDB**: Database chính
 - **Redis**: Cache layer
 - **Backend**: Node.js/Express API với JWT authentication, RBAC
 - **Frontend**: React/Vite với Google reCAPTCHA v3
+- **AI Service**: FastAPI service với ViT model và image processing (thay thế image-processor C++)
 
 ## Cách khởi động hệ thống
 
-### Lưu ý: Chỉ nên build Replica nếu bạn có 2 server chạy độc lập.
-
 ### 1. Chuẩn bị môi trường
 
-Tạo file `.env` ở thư mục gốc (ProjectLung) và backend (backend):
+Tạo file `.env` ở thư mục gốc (ProjectLung):
 
 ```env
-# MongoDB Read/Write Splitting
-MONGO_URI_WRITE=mongodb://mongo-write:27017/lung_app
-MONGO_URI_READ=mongodb://mongo-read:27017/lung_app
+# MongoDB
+MONGO_URI_WRITE=mongodb://mongo:27017/lung_app
+MONGO_URI_READ=mongodb://mongo:27017/lung_app
 
 # JWT và Security
 JWT_SECRET=your_super_secret_jwt_key_here_change_in_production
@@ -46,6 +44,10 @@ REDIS_PORT=6379
 AI_API_KEY=lungai
 AI_API_SECRET=supersecret
 
+# Image processing security keys (cùng service với AI, port 8001)
+IMAGE_API_KEY=lungimage
+IMAGE_API_SECRET=supersecretimage
+
 USE_RATE_LIMIT=true
 ```
 
@@ -53,17 +55,11 @@ USE_RATE_LIMIT=true
 ### 2. Khởi động hệ thống
 
 ```bash
-# Bước 1: Khởi động các service chính (không build image-processor)
-docker-compose up -d backend frontend db-healthcheck mongo-write mongo-read mongo-express-write mongo-express-read redis
+# Khởi động tất cả các service chính
+docker-compose up -d backend frontend db-healthcheck mongo mongo-express redis ai-service
 
-# Nếu muốn build và chạy image-processor (C++), hãy thực hiện riêng:
-# docker-compose build image-processor
-# docker-compose up -d image-processor
-# Bước 3: Khởi tạo replica set (tự động, chỉ chạy 1 lần khi setup lần đầu)
-docker-compose up init-mongo-replica
-
-# Service này sẽ tự động khởi tạo replica set cho MongoDB. Sau khi thấy log "ok" hoặc không còn lỗi, bạn có thể dừng service này:
-docker-compose stop init-mongo-replica
+# Hoặc khởi động toàn bộ hệ thống
+docker-compose up -d
 ```
 
 ### 3. Chạy migration (tạo collections và indexes)
@@ -72,7 +68,7 @@ docker-compose stop init-mongo-replica
 # Vào container backend
 docker-compose exec backend sh
 
-# Chạy migration (migrate-mongo sẽ tự động dùng DB write)
+# Chạy migration
 npm run migrate:up
 
 # Thoát container
@@ -84,39 +80,48 @@ exit
 
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:4000
-- **MongoDB Write**: localhost:27017
-- **MongoDB Read**: localhost:27018
+- **MongoDB**: localhost:27017
 - **Redis**: localhost:6379
-- **Mongo Express (Write)**: http://localhost:8081 (admin/admin)
-- **Mongo Express (Read)**: http://localhost:8082 (admin/admin)
+- **Mongo Express**: http://localhost:8081 (admin/admin)
 - **DB Healthcheck**: http://localhost:9990/health
 - **AI Service (FastAPI)**: http://localhost:8000
+  - `/predict` - AI prediction với ViT model
+  - `/process_image` - Image processing (port 8001)
+  - `/info` - Thông tin service và model
+  - `/image/info` - Thông tin image processing operations
 
 ### Kết nối bảo mật giữa backend (Express) và ai-service (FastAPI)
 
-Khi backend gọi API sang ai-service, phải truyền 2 header:
-
+#### AI Prediction Endpoints
+Khi backend gọi API sang ai-service để prediction, phải truyền 2 header:
 - `x-api-key: ${AI_API_KEY}`
 - `x-api-secret: ${AI_API_SECRET}`
 
-Hai giá trị này lấy từ file .env. Nếu không đúng, ai-service sẽ trả về lỗi 401.
-### Một số route mặc định của AI service (FastAPI)
+#### Image Processing Endpoints
+Khi backend gọi API sang ai-service để xử lý ảnh, phải truyền 2 header:
+- `x-api-key: ${IMAGE_API_KEY}`
+- `x-api-secret: ${IMAGE_API_SECRET}`
 
+Các giá trị này lấy từ file .env. Nếu không đúng, ai-service sẽ trả về lỗi 401.
+
+### Các route của AI service (FastAPI)
+
+**AI Prediction:**
 - `GET /health` — kiểm tra trạng thái service
 - `GET /info` — thông tin service/model
 - `GET /ping` — kiểm tra kết nối (trả về pong)
-- `POST /predict` — nhận dữ liệu, trả về kết quả dự đoán (yêu cầu header bảo mật)
+- `POST /predict` — prediction với base64 image (yêu cầu AI auth headers)
+- `POST /predict_file` — prediction với file upload (yêu cầu AI auth headers)
+- `POST /reload_model` — reload ViT model (yêu cầu AI auth headers)
 
-### (Optional) Build service GrayScale 
-```
-docker-compose build image-processor
-docker-compose up -d image-processor
-```
+**Image Processing:**
+- `GET /image/info` — danh sách operations hỗ trợ
+- `POST /process_image` — xử lý ảnh với base64 (yêu cầu IMAGE auth headers)
+- `POST /process_image_file` — xử lý ảnh với file upload (yêu cầu IMAGE auth headers)
 
-### Đồng bộ dữ liệu
-
-MongoDB Replica Set tự động đồng bộ dữ liệu từ Primary (mongo-write) sang Secondary (mongo-read).  
-Không cần viết code đồng bộ thủ công.
+**Supported Image Operations:**
+- `resize`, `grayscale`, `blur`, `sharpen`, `enhance`, `brightness`
+- `denoise`, `rotate`, `flip`, `crop`, `edge_detect`, `normalize`
 
 ## Troubleshooting
 
@@ -124,28 +129,46 @@ Không cần viết code đồng bộ thủ công.
 
 ```bash
 # Kiểm tra logs
-docker-compose logs mongo-write
-docker-compose logs mongo-read
+docker-compose logs mongo
 
 # Xóa volumes và khởi động lại
 docker-compose down -v
 docker-compose up -d
 ```
 
-### 2. Replica set chưa được khởi tạo
-
-```bash
-# Chạy lại script khởi tạo
-docker-compose up init-mongo-replica
-```
-
-### 3. Backend không kết nối được DB
+### 2. Backend không kết nối được DB
 
 ```bash
 # Kiểm tra network
-docker-compose exec backend ping mongo-write
-docker-compose exec backend ping mongo-read
+docker-compose exec backend ping mongo
 
 # Kiểm tra biến môi trường
 docker-compose exec backend env | grep MONGO
+```
+
+### 3. AI Service không load được model
+
+```bash
+# Kiểm tra logs
+docker-compose logs ai-service
+
+# Rebuild ai-service
+docker-compose build ai-service
+docker-compose up -d ai-service
+
+# Kiểm tra model đã được copy vào container chưa
+docker-compose exec ai-service ls -la vit.pkl
+```
+
+### 4. Rebuild tất cả services
+
+```bash
+# Dừng tất cả
+docker-compose down
+
+# Build lại tất cả
+docker-compose build
+
+# Khởi động lại
+docker-compose up -d
 ```
