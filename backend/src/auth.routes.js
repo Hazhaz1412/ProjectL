@@ -1,19 +1,3 @@
-// Middleware xác thực JWT
-function requireJWT(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Missing or invalid Authorization header' });
-  }
-  const token = authHeader.split(' ')[1];
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload;
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
-  }
-}
- 
 require('dotenv').config();
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -24,6 +8,8 @@ const nodemailer = require('nodemailer');
 const { ObjectId } = require('mongodb');
 const { getDbWrite, getDbRead } = require('./db.rw');
 const axios = require('axios');
+const { requireAuth } = require('./middleware/require-auth');
+const { loadUserContext, invalidateUserContext } = require('./rbac/user-role.service');
 
 // Đã thay thế bằng getDbWrite/getDbRead từ db.rw.js
 
@@ -47,7 +33,10 @@ async function sendVerificationEmail(to, code) {
 const router = express.Router();
 
 function getRedis(req) {
-  return req.app.get('redis');
+  if (req.app && typeof req.app.get === 'function') {
+    return req.app.get('redis');
+  }
+  return null;
 }
  
 router.get('/verify', async (req, res) => {
@@ -62,6 +51,22 @@ router.get('/verify', async (req, res) => {
     // Cập nhật user là đã active
     await users.updateOne({ _id: record.user_id }, { $set: { is_active: true } });
     await authentication.updateOne({ _id: record._id }, { $set: { is_verified: true, verified_at: new Date() } });
+
+    const redis = getRedis(req);
+    await invalidateUserContext(record.user_id, { redis });
+
+    if (redis && redis.del) {
+      try {
+        await redis.del(`user_profile:${record.user_id.toString()}`);
+        const userDoc = await users.findOne({ _id: record.user_id }, { projection: { email: 1 } });
+        if (userDoc?.email) {
+          await redis.del(`user:${userDoc.email}`);
+        }
+      } catch (cacheErr) {
+        console.warn('Cache invalidation error:', cacheErr.message);
+      }
+    }
+
     res.json({ message: 'Account verified successfully!' });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -85,51 +90,70 @@ const registerSchema = Joi.object({
 }).unknown(true);
 
 
-router.get('/my_profile', requireJWT, async (req, res) => {
+router.get('/my_profile', requireAuth, async (req, res) => {
   try {
     const db = await getDbRead();
     const users = db.collection('users');
-    // Lấy redis instance đúng từ req
-    let redis = null;
-    if (req.app && typeof req.app.get === 'function') {
-      redis = req.app.get('redis');
-    }
+    const redis = getRedis(req);
     const userId = req.user.user_id;
     const cacheKey = `user_profile:${userId}`;
 
-    // Kiểm tra cache trước
-    let user = null;
-    try {
-      if (redis && redis.get) {
+    let payload = null;
+
+    if (redis && redis.get) {
+      try {
         const cached = await redis.get(cacheKey);
         if (cached) {
-          user = JSON.parse(cached);
-          return res.json({ user });
+          payload = JSON.parse(cached);
+        }
+      } catch (cacheErr) {
+        console.warn('Cache read error:', cacheErr.message);
+      }
+    }
+
+    if (!payload) {
+      const user = await users.findOne(
+        { _id: new ObjectId(userId) },
+        { projection: { password: 0 } }
+      );
+
+      if (!user) return res.status(404).json({ message: 'User not found' });
+
+      const context = await loadUserContext(userId, { redis, prefetchedUser: user });
+      const roleIds = Array.isArray(user.roles)
+        ? user.roles
+            .filter(Boolean)
+            .map((value) => (value && value.toString ? value.toString() : String(value)))
+        : [];
+      const extraPermissionIds = Array.isArray(user.extra_permissions)
+        ? user.extra_permissions
+            .filter(Boolean)
+            .map((value) => (value && value.toString ? value.toString() : String(value)))
+        : [];
+      const safeUser = {
+        ...user,
+        _id: user._id instanceof ObjectId ? user._id.toHexString() : String(user._id),
+        roles: Array.from(context.roles),
+        role_ids: roleIds,
+        permissions: Array.from(context.permissions),
+        extra_permissions: extraPermissionIds,
+        is_superuser: context.isSuperuser,
+        is_staff: context.isStaff,
+        is_active: context.isActive,
+      };
+
+      payload = { user: safeUser };
+
+      if (redis && redis.set) {
+        try {
+          await redis.set(cacheKey, JSON.stringify(payload), 'EX', 1800);
+        } catch (cacheErr) {
+          console.warn('Cache write error:', cacheErr.message);
         }
       }
-    } catch (cacheErr) {
-      console.warn('Cache read error:', cacheErr.message);
     }
 
-    // Nếu cache miss, query DB với projection (loại trừ password)
-    user = await users.findOne(
-      { _id: new ObjectId(userId) },
-      { projection: { password: 0 } }
-    );
-
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    // Cache kết quả (TTL 30 phút)
-    try {
-      if (redis && redis.set) {
-        const userToCache = { ...user, _id: user._id?.toString?.() || user._id };
-        await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 1800);
-      }
-    } catch (cacheErr) {
-      console.warn('Cache write error:', cacheErr.message);
-    }
-
-    res.json({ user });
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -164,16 +188,18 @@ router.post('/register', async (req, res) => {
     const redis = getRedis(req); 
     let existing = null;
     const cacheKey = `user:${email}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      existing = JSON.parse(cached);
-    } else {
-      // Đọc kiểm tra email tồn tại nên dùng DB đọc
+    if (redis && redis.get) {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        existing = JSON.parse(cached);
+      }
+    }
+    if (!existing) {
       const dbRead = await getDbRead();
       existing = await dbRead.collection('users').findOne({ email });
-      if (existing) { 
+      if (existing && redis && redis.set) { 
         const userToCache = { ...existing, _id: existing._id?.toString?.() || existing._id };
-        await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600); // cache 1h
+        await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600);
       }
     }
     if (existing) return res.status(409).json({ message: 'Email already exists' });
@@ -191,7 +217,9 @@ router.post('/register', async (req, res) => {
     };
     const result = await users.insertOne(user);
     const userToCache = { ...user, _id: result.insertedId?.toString?.() || result.insertedId };
-    await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600);
+    if (redis && redis.set) {
+      await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600);
+    }
     const auth_code = Math.random().toString(36).substring(2, 10) + Date.now();
     await authentication.insertOne({
       user_id: result.insertedId,
@@ -222,12 +250,15 @@ router.post('/login', async (req, res) => {
     const redis = getRedis(req);
     let user = null;
     const cacheKey = `user:${email}`;
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      user = JSON.parse(cached);
-    } else {
+    if (redis && redis.get) {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        user = JSON.parse(cached);
+      }
+    }
+    if (!user) {
       user = await users.findOne({ email });
-      if (user) {
+      if (user && redis && redis.set) {
         const userToCache = { ...user, _id: user._id?.toString?.() || user._id };
         await redis.set(cacheKey, JSON.stringify(userToCache), 'EX', 3600); 
       }
@@ -235,16 +266,57 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ message: 'Invalid credentials' });
+
+    const context = await loadUserContext(user._id?.toString?.() || user._id, { redis, prefetchedUser: user });
+    const roleIds = Array.isArray(user.roles)
+      ? user.roles
+          .filter(Boolean)
+          .map((value) => (value && value.toString ? value.toString() : String(value)))
+      : [];
+    const extraPermissionIds = Array.isArray(user.extra_permissions)
+      ? user.extra_permissions
+          .filter(Boolean)
+          .map((value) => (value && value.toString ? value.toString() : String(value)))
+      : [];
+
     const payload = {
-      user_id: user._id,
+      user_id: context.userId,
       email: user.email,
-      roles: user.roles || [],
-      extra_permissions: user.extra_permissions || [],
-      is_superuser: !!user.is_superuser,
-      is_staff: !!user.is_staff
+      roles: roleIds,
+      extra_permissions: extraPermissionIds,
+      role_codes: Array.from(context.roles),
+      permission_codes: Array.from(context.permissions),
+      is_superuser: context.isSuperuser,
+      is_staff: context.isStaff,
+      is_active: context.isActive,
     };
+
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token });
+
+    if (redis && redis.set) {
+      const profilePayload = {
+        user: {
+          _id: payload.user_id,
+          email: payload.email,
+          is_superuser: payload.is_superuser,
+          is_staff: payload.is_staff,
+          is_active: payload.is_active,
+          roles: payload.role_codes,
+          role_ids: payload.roles,
+          permissions: payload.permission_codes,
+          extra_permissions: payload.extra_permissions,
+          created_at: user.created_at || null,
+          updated_at: user.updated_at || new Date(),
+        },
+      };
+      try {
+        await redis.set(`user_profile:${payload.user_id}`, JSON.stringify(profilePayload), 'EX', 1800);
+      } catch (cacheErr) {
+        console.warn('Cache write error:', cacheErr.message);
+      }
+    }
+
+    res.json({ token, user: payload });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
